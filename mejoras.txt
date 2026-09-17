@@ -1,0 +1,1 @@
+- alterar la funcion para la lectura de inputs para no depender del objeto de M5stack

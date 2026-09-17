@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "../../PLC"
+		},
+		{
+			"name": "PLC_Arduino",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}
