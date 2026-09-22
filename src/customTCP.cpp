@@ -3,6 +3,15 @@
 #include <customWifi.h>
 #include <customSD.h>
 
+SyncState syncState{
+    false,
+    0,
+    0,
+    0,
+    0
+};
+
+
 bool asegurar_conexion_TCP(WifiSetup& configWifi){
     if (configWifi.client.connected()) return true;
 
@@ -35,6 +44,8 @@ void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandI
 
 
         if (c == '\n'){ // final del comando
+
+            syncState.endTime = millis();
 
             if (discardCommand){
                 discardCommand = false;
@@ -70,8 +81,8 @@ void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandI
     }
 }
 
-
-void procesarComandoTCP(WifiSetup& configWifi, const char* comando, SemaphoreHandle_t sdMutex){
+void procesarComandoTCP(WifiSetup& configWifi, const char* comando, 
+                        SemaphoreHandle_t sdMutex){
     
     Serial.print("Comando TCP recibido: ");
 
@@ -82,9 +93,59 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando, SemaphoreHan
         return;
     }
 
+    if (strcmp(comando, "SYNC") == 0){
+        syncState.pending = true; // defino que estamos en el proceso de sincronizacion
+        syncState.startTime = millis();
+        configWifi.client.println("TIME_REQ");
+        return;
+    }
+
+    if (strncmp(comando, "TIME,", 5) == 0){
+        if (!syncState.pending){ // no aceptar time si nosotros el proceso no ha sido comenzado
+            configWifi.client.println("ERR,UNEXPECTED_TIME");
+            return;
+        }
+
+        const char* timestampText = comando + 5;
+
+        if (*timestampText == '\0' || *timestampText == '-'){ // Proteccion por si el tiempo dado es malo
+            syncState.pending = false;
+            configWifi.client.println("ERR,INVALID_UNIX_TIME");
+            return;
+        }
+
+        char* endPointer = nullptr;
+
+        unsigned long long value = strtoull(timestampText, &endPointer, 10);
+
+        // Comprobar que todo el string era numerico
+        if (endPointer == timestampText || *endPointer != '\0'){
+            syncState.pending = false;
+            configWifi.client.println("ERR,INVALID_UNIX_TIME");
+            return;
+        }
+
+        syncState.serverTime = static_cast<uint64_t>(value); // guardo el tiempo del server
+        syncState.pending = false; // cierro el pending porque ya tengo todo lo que necesito
+
+        xSemaphoreTake(sdMutex, portMAX_DELAY); // ocupo la SD
+        bool flag = escribir_sync_a_SD(syncState);
+        xSemaphoreGive(sdMutex); // libero la SD
+
+        if(!flag){
+            configWifi.client.println("ERR,SYNC_SD");
+            return;
+        }
+
+        // Solo confirmamos después de guardar correctamente en SD
+        configWifi.client.print("SYNC_OK,");
+        configWifi.client.println(syncState.plcTime);
+        Serial.println("SYNC realizada | PLC");
+        return;
+    }
+
     if (strncmp(comando, "GET_FROM,", 9) == 0){
         const char* timestampText = comando + 9;
-
 
         // No hay timestamp
         if (*timestampText == '\0' ||*timestampText == '-'){
@@ -122,11 +183,8 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
     size_t snapshotSize = 0;
 
     xSemaphoreTake(sdMutex, portMAX_DELAY); // bloquea la SD
-
-
     bool snapshotOk = obtener_size_datos(snapshotSize);
-
-    xSemaphoreGive(sdMutex); // devuelvo el semaforo
+    xSemaphoreGive(sdMutex); // libero la SD
 
     if (!snapshotOk){
         configWifi.client.println("ERR,SD");
@@ -150,16 +208,13 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
     bool discardLine = false;
     size_t offset = 0;
 
-
-
     while (offset < snapshotSize){ // Leer hasta Snapshot
         size_t remaining = snapshotSize - offset;
         size_t bytesToRead = remaining;
 
         if (bytesToRead > SD_READ_BUFFER_SIZE){
-            bytesToRead =SD_READ_BUFFER_SIZE;
+            bytesToRead = SD_READ_BUFFER_SIZE;
         }
-
 
         xSemaphoreTake(sdMutex, portMAX_DELAY); // bloqueo SD
         size_t bytesRead = leer_bloque_datos(offset, sdBuffer, bytesToRead);
@@ -171,7 +226,6 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
         }
 
         offset += bytesRead;
-
 
         for (size_t i = 0; i < bytesRead; i++){ // Proceso el bloque
             char c = static_cast<char>(sdBuffer[i]);

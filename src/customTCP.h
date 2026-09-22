@@ -7,6 +7,14 @@
 #include <freertos/semphr.h>
 
 
+struct SyncState{
+    bool pending;
+    uint32_t startTime;
+    uint32_t endTime;
+    uint32_t plcTime;
+    uint64_t serverTime;
+};
+
 constexpr size_t TCP_COMMAND_BUFFER_SIZE = 64;
 constexpr size_t SD_READ_BUFFER_SIZE = 512;
 constexpr size_t SD_LINE_BUFFER_SIZE = 64;
