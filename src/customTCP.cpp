@@ -144,6 +144,17 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
         return;
     }
 
+    if (strcmp(comando, "GET_ALL") == 0){
+
+        if (!enviar_datos(configWifi, 0, sdMutex)){
+            if (configWifi.client.connected()){
+                configWifi.client.println("ERR,DATA_TRANSFER");
+            }
+        }
+
+        return;
+    }
+
     if (strncmp(comando, "GET_FROM,", 9) == 0){
         const char* timestampText = comando + 9;
 
@@ -165,10 +176,10 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
 
         uint32_t timestamp = static_cast<uint32_t>(value);
 
-        if (!enviar_historico(configWifi, timestamp, sdMutex)){
+        if (!enviar_datos(configWifi, timestamp, sdMutex)){
             // Si TCP sigue vivo podemos avisar.
             if (configWifi.client.connected()){
-                configWifi.client.println("ERR,HISTORY_TRANSFER");
+                configWifi.client.println("ERR,DATA_TRANSFER");
             }
         }
 
@@ -178,20 +189,20 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
     configWifi.client.println("ERR,UNKNOWN_COMMAND");
 }
 
-bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle_t sdMutex){
-    
+bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle_t sdMutex){
     size_t snapshotSize = 0;
 
-    xSemaphoreTake(sdMutex, portMAX_DELAY); // bloquea la SD
+    // Obtener snapshot del tamaño actual del archivo
+    xSemaphoreTake(sdMutex, portMAX_DELAY);
     bool snapshotOk = obtener_size_datos(snapshotSize);
-    xSemaphoreGive(sdMutex); // libero la SD
+    xSemaphoreGive(sdMutex);
 
     if (!snapshotOk){
         configWifi.client.println("ERR,SD");
         return false;
     }
 
-    // Empiezo a transmitir
+    // Avisar del comienzo de la transmision
     configWifi.client.print("DATA_BEGIN,");
     configWifi.client.println(snapshotSize);
 
@@ -201,14 +212,14 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
         return true;
     }
 
-    // gestion de buffers
     uint8_t sdBuffer[SD_READ_BUFFER_SIZE];
     char lineBuffer[SD_LINE_BUFFER_SIZE];
     size_t lineIndex = 0;
     bool discardLine = false;
     size_t offset = 0;
 
-    while (offset < snapshotSize){ // Leer hasta Snapshot
+    while (offset < snapshotSize){
+
         size_t remaining = snapshotSize - offset;
         size_t bytesToRead = remaining;
 
@@ -216,83 +227,91 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
             bytesToRead = SD_READ_BUFFER_SIZE;
         }
 
-        xSemaphoreTake(sdMutex, portMAX_DELAY); // bloqueo SD
+        // Leer bloque de SD
+        xSemaphoreTake(sdMutex, portMAX_DELAY);
         size_t bytesRead = leer_bloque_datos(offset, sdBuffer, bytesToRead);
-        xSemaphoreGive(sdMutex); // desbloqueo la SD
+        xSemaphoreGive(sdMutex);
 
         if (bytesRead == 0){
-            Serial.println("Error leyendo histórico SD");
+            Serial.println("Error leyendo datos SD");
             return false;
         }
 
         offset += bytesRead;
 
-        for (size_t i = 0; i < bytesRead; i++){ // Proceso el bloque
+        // Procesar el bloque
+        for (size_t i = 0; i < bytesRead; i++){
+
             char c = static_cast<char>(sdBuffer[i]);
 
-            // Ignorar \r
+            // Ignorar CR
             if (c == '\r'){continue;}
+            
+            // Final de la linea
+            if (c == '\n'){
 
-            if (c == '\n'){ // Fin de la linea
-                if (!discardLine && lineIndex > 0){
+                if (!discardLine && lineIndex > RECORD_PREFIX_SIZE){
+
                     lineBuffer[lineIndex] = '\0';
 
-                    // Extrae el timestamp
+                    // DATA,xxxx,...
+                    // SYNC,xxxx,...
+                    const char* timestampText = lineBuffer + RECORD_PREFIX_SIZE;
                     char* endPointer = nullptr;
-                    unsigned long lineTimestamp = strtoul(lineBuffer, &endPointer,10);
 
-                    // El timestamp debe acabar justo
-                    // donde aparece la coma.
-                    if (endPointer != lineBuffer && *endPointer == ','){
+                    unsigned long lineTimestamp = strtoul(timestampText, &endPointer, 10);
 
+                    // Formato valido:
+                    // TTTT,<timestamp>,...
+                    if (endPointer != timestampText && *endPointer == ','){
                         if (lineTimestamp >= timestamp){
 
                             if (!configWifi.client.connected()){return false;}
 
-                            configWifi.client.write(reinterpret_cast < const uint8_t* > (lineBuffer), lineIndex);
-
+                            configWifi.client.write(reinterpret_cast<const uint8_t*>(lineBuffer), lineIndex);
                             configWifi.client.write('\n');
                         }
                     }
                 }
 
-
+                // Preparar siguiente línea
                 lineIndex = 0;
                 discardLine = false;
+
                 continue;
             }
 
-            if (!discardLine){ // construir la linea
-                if (lineIndex < SD_LINE_BUFFER_SIZE - 1){
+            // Construyo la linea
+            if (!discardLine){
+                if (lineIndex <SD_LINE_BUFFER_SIZE - 1){
                     lineBuffer[lineIndex] = c;
                     lineIndex++;
-                }else{ // por seaca para evitar overflow
+                }else{
+                    // Línea demasiado larga.
+                    // Descartar hasta encontrar '\n'
                     discardLine = true;
                     lineIndex = 0;
                 }
             }
         }
 
-        // Dar algo de CPU al resto de tareas.
+        // Dar CPU al resto de tareas
         vTaskDelay(pdMS_TO_TICKS(1));
     }
 
-
-    if (lineIndex > 0 && !discardLine){
+    // ultima linea
+    if (lineIndex > RECORD_PREFIX_SIZE && !discardLine){
         
         lineBuffer[lineIndex] = '\0';
-
+        const char* timestampText = lineBuffer +RECORD_PREFIX_SIZE;
         char* endPointer = nullptr;
 
-        unsigned long lineTimestamp = strtoul(lineBuffer, &endPointer, 10);
+        unsigned long lineTimestamp = strtoul(timestampText, &endPointer, 10);
 
-        if (endPointer != lineBuffer && *endPointer == ',' && lineTimestamp >= timestamp){
-            if (!configWifi.client.connected()){
-                return false;
-            }
-
-
-            configWifi.client.write(reinterpret_cast < const uint8_t* >(lineBuffer), lineIndex);
+        if (endPointer != timestampText && *endPointer == ',' && lineTimestamp >= timestamp){
+            
+            if (!configWifi.client.connected()){return false;}
+            configWifi.client.write(reinterpret_cast<const uint8_t*>(lineBuffer), lineIndex);
             configWifi.client.write('\n');
         }
     }
@@ -301,3 +320,4 @@ bool enviar_historico(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle
     configWifi.client.println("DATA_END");
     return true;
 }
+
