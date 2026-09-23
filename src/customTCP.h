@@ -25,5 +25,5 @@ bool asegurar_conexion_TCP(WifiSetup& configWifi);
 void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandIndex, 
                         bool& discardCommand, SemaphoreHandle_t sdMutex);
 void procesarComandoTCP(WifiSetup& configWifi, const char* comando, SemaphoreHandle_t sdMutex);
-bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle_t sdMutex);
+bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle_t sdMutex, bool buscarTimeStamp = false);
 

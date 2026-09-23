@@ -146,7 +146,7 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
 
     if (strcmp(comando, "GET_ALL") == 0){
 
-        if (!enviar_datos(configWifi, 0, sdMutex)){
+        if (!enviar_datos(configWifi, 0, sdMutex, true)){
             if (configWifi.client.connected()){
                 configWifi.client.println("ERR,DATA_TRANSFER");
             }
@@ -189,8 +189,10 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
     configWifi.client.println("ERR,UNKNOWN_COMMAND");
 }
 
-bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, SemaphoreHandle_t sdMutex){
-    size_t snapshotSize = 0;
+bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, 
+        SemaphoreHandle_t sdMutex, bool buscarTimeStamp = false){
+    
+              size_t snapshotSize = 0;
 
     // Obtener snapshot del tamaño actual del archivo
     xSemaphoreTake(sdMutex, portMAX_DELAY);
