@@ -3,12 +3,13 @@
 
 #include <customWifi.h>
 #include <customTask.h>
+#include <customNVS.h>
 
 
 
 // Config global
 WifiSetup configWifi;
-
+StorageState storageState{};
 
 void setup(){
     
@@ -29,6 +30,18 @@ void setup(){
     M5StamPLC.begin();
     Serial.println("M5StamPLC inicializado");
 
+    // Inicializar NVS
+    if (!init_NVS()){
+        Serial.println("ERROR inicializando NVS. PLC detenida");
+        return;
+    }
+
+    // Cargar estado persistente a RAM
+    if (!cargar_storage_state(storageState)){
+        Serial.println("ERROR cargando StorageState. PLC detenida");
+        return;
+    }
+
 
     // Configurar Wifi
     configWifi.ssid = "test_server_plc";
@@ -43,7 +56,7 @@ void setup(){
     Serial.println("taskRead inicializado");
 
     // Iniciamos task write
-    initTaskWriter();
+    initTaskWriter(storageState);
     Serial.println("taskWriter inicializado");
 
     // Iniciamos task wifi
@@ -51,7 +64,7 @@ void setup(){
     Serial.println("taskWifi inicializado");
 
     // Iniciamos task TCP
-    initTaskTCP(configWifi);
+    initTaskTCP(configWifi, storageState);
     Serial.println("taskTCP inicializado");
 
 

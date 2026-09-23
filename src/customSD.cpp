@@ -4,42 +4,80 @@
 #include <customMeas.h>
 #include <customTCP.h>
 #include <customSD.h>
+#include <customNVS.h>
 
-bool escribir_dato_a_SD(Measurement& meas){
-    File file = SD.open("/datos.csv", FILE_APPEND);
+bool escribir_dato_a_SD(Measurement& meas, uint16_t& fileId, size_t& fileSize){
 
-    if (!file) {
-        Serial.println("Error abriendo datos.csv");
+    char filePath[12];
+
+    snprintf(filePath, sizeof(filePath), "/%05u.csv", 
+            static_cast<unsigned int>(fileId));
+
+    File file = SD.open(filePath, FILE_APPEND);
+
+    if (!file){
+        Serial.print("Error abriendo ");
+        Serial.println(filePath);
         return false;
     }
+
 
     file.print("DATA,");
     file.print(meas.timestamp);
     file.print(",");
     file.println(meas.pinState);
 
+    fileSize = file.position(); // file.position() es al final del archivo, corresponde al tamaño
+
     file.close();
     return true;
 }
 
 
-bool escribir_sync_a_SD(SyncState& state){
+bool escribir_sync_a_SD(SyncState& state, uint16_t& fileId, size_t& fileSize){
+    char filePath[12];
 
-    File file = SD.open("/datos.csv", FILE_APPEND);
+    snprintf(filePath, sizeof(filePath), "/%05u.csv", static_cast<unsigned int>(fileId));
+
+    File file = SD.open(filePath, FILE_APPEND);
 
     if (!file){
-        Serial.println("Error abriendo datos.csv");
+        Serial.print("Error abriendo ");
+        Serial.println(filePath);
         return false;
     }
-
-    state.plcTime = state.startTime + (state.endTime - state.startTime) / 2;
 
     file.print("SYNC,");
     file.print(state.plcTime);
     file.print(",");
     file.println(state.serverTime);
 
+    fileSize = file.position(); // file.position() es al final del archivo, corresponde al tamaño
+
     file.close();
+    return true;
+}
+
+bool crear_archivo_csv(uint16_t& fileId){
+
+    char filePath[12];
+
+    snprintf(filePath, sizeof(filePath), "/%05u.csv", static_cast<unsigned int>(fileId));
+
+    // Si ya existe, no hacemos nada.
+    if (SD.exists(filePath)){return true;}
+
+    File file = SD.open(filePath, FILE_APPEND);
+
+    if (!file){
+        Serial.print("ERROR creando ");
+        Serial.println(filePath);
+        return false;
+    }
+
+    file.close();
+    
+
     return true;
 }
 

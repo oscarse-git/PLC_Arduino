@@ -31,8 +31,8 @@ bool asegurar_conexion_TCP(WifiSetup& configWifi){
     return false;
 }
 
-void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandIndex, 
-                        bool& discardCommand, SemaphoreHandle_t sdMutex){
+void leer_datos_TCP(WifiSetup& configWifi, StorageState& storageState, char* commandBuffer, 
+                    size_t& commandIndex, bool& discardCommand, SemaphoreHandle_t sdMutex){
     
     while (configWifi.client.available() > 0){
         
@@ -57,7 +57,7 @@ void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandI
             if (commandIndex == 0){continue;} // Ignorar líneas vacías
 
             commandBuffer[commandIndex] = '\0'; // Terminar string C
-            procesarComandoTCP(configWifi, commandBuffer, sdMutex);
+            procesarComandoTCP(configWifi, storageState, commandBuffer, sdMutex);
             commandIndex = 0; // Preparar siguiente comando
 
             continue;
@@ -81,8 +81,8 @@ void leer_datos_TCP(WifiSetup& configWifi, char* commandBuffer, size_t& commandI
     }
 }
 
-void procesarComandoTCP(WifiSetup& configWifi, const char* comando, 
-                        SemaphoreHandle_t sdMutex){
+void procesarComandoTCP(WifiSetup& configWifi, StorageState& storageState, 
+                        const char* comando, SemaphoreHandle_t sdMutex){
     
     Serial.print("Comando TCP recibido: ");
 
@@ -127,9 +127,32 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
 
         syncState.serverTime = static_cast<uint64_t>(value); // guardo el tiempo del server
         syncState.pending = false; // cierro el pending porque ya tengo todo lo que necesito
+        syncState.plcTime = syncState.startTime + (syncState.endTime - syncState.startTime) / 2;
+
+        size_t fileSize = 0;
 
         xSemaphoreTake(sdMutex, portMAX_DELAY); // ocupo la SD
-        bool flag = escribir_sync_a_SD(syncState);
+
+        bool flag = escribir_sync_a_SD(syncState, storageState.current_writing_file, fileSize);
+        
+        if (flag && fileSize >= MAX_CSV_SIZE){
+
+            uint16_t nextFile = static_cast<uint16_t>(storageState.current_writing_file + 1);
+            
+            if (crear_archivo_csv(nextFile)){
+            
+                if (guardar_current_writing_file(nextFile)){
+                    storageState.current_writing_file = nextFile;
+                }else{
+                    Serial.println("ERROR persistiendo current_writing_file");
+                }
+            
+            }else{
+                Serial.println("ERROR creando nuevo CSV durante rotacion");
+            }
+        }
+    
+
         xSemaphoreGive(sdMutex); // libero la SD
 
         if(!flag){
@@ -190,7 +213,7 @@ void procesarComandoTCP(WifiSetup& configWifi, const char* comando,
 }
 
 bool enviar_datos(WifiSetup& configWifi, uint32_t timestamp, 
-        SemaphoreHandle_t sdMutex, bool buscarTimeStamp = false){
+        SemaphoreHandle_t sdMutex, bool buscarTimeStamp){
     
               size_t snapshotSize = 0;
 

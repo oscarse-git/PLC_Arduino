@@ -9,6 +9,7 @@
 #include <customSD.h>
 #include <customWifi.h>
 #include <customTCP.h>
+#include <customNVS.h>
 
 extern QueueHandle_t measurementQueue;
 extern TaskHandle_t taskReadHandle;
@@ -23,9 +24,8 @@ void IRAM_ATTR onReadTimer();
 void initTaskRead();
 void taskRead(void* parameter);
 
-
 // TASK WRITER
-void initTaskWriter();
+void initTaskWriter(StorageState& storageState);
 void taskWriter(void* parameter);
 
 // TASK WIFI
@@ -33,5 +33,5 @@ void initTaskWifi(WifiSetup& configWifi);
 void taskWifi(void* parameter);
 
 // TASK TCP
-void initTaskTCP(WifiSetup& configWifi);
+void initTaskTCP(WifiSetup& configWifi, StorageState& storageState);
 void taskTCP(void* parameter);

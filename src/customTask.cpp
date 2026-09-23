@@ -14,7 +14,12 @@ TaskHandle_t taskWriterHandle = nullptr;
 TaskHandle_t taskWifiHandle = nullptr;
 TaskHandle_t taskTCPHandle = nullptr;
 
+struct TaskTCPParams{ // estructura tiene punteros a las structuras OG
+    WifiSetup* configWifi;
+    StorageState* storageState;
+};
 
+TaskTCPParams taskTCPParams;
 
 // TIMER
 
@@ -69,7 +74,7 @@ void taskRead(void* parameter){
     meas.pinState = 0;
 
     while (true){ 
-        ulTaskNotifyTake(pdFALSE, portMAX_DELAY); // Duerme hasta que el timer se activa
+        ulTaskNotifyTake(pdFALSE, portMAX_DELAY); // Duerme hasta que el timer dispara
 
         if (lecturaEntrada(meas)){ // mira si algo cambia y guarda solo en ese caso
             xQueueSend(measurementQueue, &meas, 0);
@@ -81,7 +86,7 @@ void taskRead(void* parameter){
 
 // TASK WRITE
 
-void initTaskWriter(){
+void initTaskWriter(StorageState& storageState){
     // Crear mutex compartido de la SD
     sdMutex = xSemaphoreCreateMutex();
 
@@ -90,17 +95,15 @@ void initTaskWriter(){
         return;
     }
 
-
     BaseType_t result = xTaskCreatePinnedToCore(
         taskWriter,          
         "taskWriter",        
         4096,              
-        nullptr,
+        &storageState,
         2,
         &taskWriterHandle,
         1
     );
-
 
     if (result != pdPASS){
         Serial.println("ERROR creando taskWriter");
@@ -109,27 +112,40 @@ void initTaskWriter(){
 }
 
 void taskWriter(void* parameter){
+    
+    StorageState* storageState = static_cast<StorageState*>(parameter);
     Measurement meas;
 
     while (true){
         // Esperar una medida de taskRead
-        xQueueReceive(
-            measurementQueue,
-            &meas,
-            portMAX_DELAY
-        );
+        xQueueReceive(measurementQueue, &meas, portMAX_DELAY);
+
+        size_t fileSize = 0;
 
         // Esperar acceso exclusivo a la SD
-        xSemaphoreTake(
-            sdMutex,
-            portMAX_DELAY
-        );
+        xSemaphoreTake(sdMutex, portMAX_DELAY);
 
-        bool flag = escribir_dato_a_SD(meas);
+        bool flag = escribir_dato_a_SD(meas, storageState->current_writing_file, fileSize);
 
-        // Liberar SD
+        // comprobar si hay que rotar (overflow de los 16 bits)
+        if (flag && fileSize >= MAX_CSV_SIZE){
+
+            uint16_t nextFile = static_cast<uint16_t>(storageState->current_writing_file + 1);
+            
+            if (crear_archivo_csv(nextFile)){
+            
+                if (guardar_current_writing_file(nextFile)){
+                    storageState->current_writing_file = nextFile;
+                }else{
+                    Serial.println("ERROR persistiendo current_writing_file");
+                }
+            
+            }else{
+                Serial.println("ERROR creando nuevo CSV durante rotacion");
+            }
+        }
+
         xSemaphoreGive(sdMutex);
-
         if(!flag){Serial.println("ERROR guardando Measurement en SD");}
 
     }
@@ -140,6 +156,7 @@ void taskWriter(void* parameter){
 // TASK WIFI
 
 void initTaskWifi(WifiSetup& configWifi){
+
     BaseType_t result = xTaskCreatePinnedToCore(
         taskWifi,
         "taskWifi",
@@ -156,9 +173,7 @@ void initTaskWifi(WifiSetup& configWifi){
 }
 
 void taskWifi(void* parameter){
-    WifiSetup* configWifi =
-        static_cast<WifiSetup*>(parameter);
-
+    WifiSetup* configWifi = static_cast<WifiSetup*>(parameter);
     WiFi.mode(WIFI_STA);
 
     while (true){
@@ -196,13 +211,17 @@ void taskWifi(void* parameter){
 
 // TASK TCP
 
-void initTaskTCP(WifiSetup& configWifi){
+void initTaskTCP(WifiSetup& configWifi, StorageState& storageState){
+
+    taskTCPParams.configWifi = &configWifi;
+    taskTCPParams.storageState = &storageState;
+
     BaseType_t result =
         xTaskCreatePinnedToCore(
             taskTCP,
             "taskTCP",
             6144,
-            &configWifi,
+            &taskTCPParams,
             1,
             &taskTCPHandle,
             0
@@ -217,7 +236,10 @@ void initTaskTCP(WifiSetup& configWifi){
 
 void taskTCP(void* parameter){
 
-    WifiSetup* configWifi = static_cast<WifiSetup*>(parameter);
+    TaskTCPParams* params = static_cast<TaskTCPParams*>(parameter);
+    WifiSetup* configWifi = params->configWifi;
+    StorageState* storageState = params->storageState;
+
     char commandBuffer[TCP_COMMAND_BUFFER_SIZE];
     size_t commandIndex = 0;
     bool discardCommand = false;
@@ -245,7 +267,7 @@ void taskTCP(void* parameter){
             }
         }
 
-        leer_datos_TCP(*configWifi, commandBuffer, commandIndex, discardCommand, sdMutex);
+        leer_datos_TCP(*configWifi, *storageState, commandBuffer, commandIndex, discardCommand, sdMutex);
 
         vTaskDelay(pdMS_TO_TICKS(10));
     }
