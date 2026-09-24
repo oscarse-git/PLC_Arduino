@@ -35,5 +35,3 @@ void leerPines(uint8_t& pinState){
         };
     }
 }
-
-

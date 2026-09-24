@@ -1,5 +1,3 @@
-#pragma once
-
 #include <customWifi.h>
 #include <WiFi.h>
 
@@ -21,7 +19,6 @@ void start_wifi_connection(WifiSetup& configWifi){
     Serial.print("IP ESP32: ");
     Serial.println(WiFi.localIP());
 }
-
 
 bool conectar_servidor_TCP(WifiSetup& configWifi){
     return configWifi.client.connect(

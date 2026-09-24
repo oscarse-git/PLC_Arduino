@@ -12,8 +12,11 @@
 #include <customNVS.h>
 
 extern QueueHandle_t measurementQueue;
+
 extern TaskHandle_t taskReadHandle;
 extern TaskHandle_t taskTCPHandle;
+extern TaskHandle_t taskCleanupHandle;
+
 
 // TIMER
 void initReadTimer();
@@ -35,3 +38,7 @@ void taskWifi(void* parameter);
 // TASK TCP
 void initTaskTCP(WifiSetup& configWifi, StorageState& storageState);
 void taskTCP(void* parameter);
+
+// TASK CLEANUP
+void initTaskCleanup(StorageState& storageState);
+void taskCleanup(void* parameter);

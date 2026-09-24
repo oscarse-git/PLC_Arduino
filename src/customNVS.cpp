@@ -100,7 +100,6 @@ bool guardar_oldest_file(uint16_t& fileId){
     return true;
 }
 
-
 bool guardar_current_writing_file(uint16_t& fileId){
     xSemaphoreTake(nvsMutex, portMAX_DELAY);
     size_t bytesWritten = preferences.putUShort(KEY_CURRENT_FILE, fileId);

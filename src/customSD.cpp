@@ -33,7 +33,6 @@ bool escribir_dato_a_SD(Measurement& meas, uint16_t& fileId, size_t& fileSize){
     return true;
 }
 
-
 bool escribir_sync_a_SD(SyncState& state, uint16_t& fileId, size_t& fileSize){
     char filePath[12];
 
@@ -77,7 +76,22 @@ bool crear_archivo_csv(uint16_t& fileId){
 
     file.close();
     
+    return true;
+}
 
+bool borrar_archivo_csv(uint16_t& fileId){
+    
+    char filePath[12];
+
+    snprintf(filePath, sizeof(filePath), "/%05u.csv", static_cast<unsigned int>(fileId));
+
+    if (!SD.exists(filePath)){return true;} // no existe, no hay que hacer nada
+
+    if (!SD.remove(filePath)){ // si no es capaz de eliminarlo
+        Serial.print("ERROR eliminando ");
+        Serial.println(filePath);
+        return false;
+    }
     return true;
 }
 
@@ -100,7 +114,6 @@ bool obtener_size_datos(size_t& size){
     return true;
 }
 
-
 size_t leer_bloque_datos(size_t offset, uint8_t* buffer, size_t maxBytes){
     File file = SD.open("/datos.csv", FILE_READ);
 
@@ -120,30 +133,16 @@ size_t leer_bloque_datos(size_t offset, uint8_t* buffer, size_t maxBytes){
     return bytesRead;
 }
 
-
-float ver_espacio_libre(void){
+float ver_espacio_usado(void){
     uint64_t totalSize =  SD.totalBytes();
     uint64_t usedSize =  SD.usedBytes();
 
-    return 1.0f - ((float)usedSize / (float)totalSize);
+    if (totalSize == 0){return 0.0f;} // Proteccion contra SD vacia
+
+    return ((float)usedSize / (float)totalSize);
 }
 
 
-bool deleteCSV(){
-    const char* filePath = "/datos.csv";
 
-    if (!SD.exists(filePath)){
-        Serial.println("El archivo no existe");
-        return false;
-    }
-
-    if (SD.remove(filePath)){
-        Serial.println("CSV borrado correctamente");
-        return true;
-    }
-
-    Serial.println("Error al borrar el CSV");
-    return false;
-}
 
 

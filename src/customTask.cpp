@@ -13,6 +13,10 @@ TaskHandle_t taskReadHandle = nullptr;
 TaskHandle_t taskWriterHandle = nullptr;
 TaskHandle_t taskWifiHandle = nullptr;
 TaskHandle_t taskTCPHandle = nullptr;
+TaskHandle_t taskCleanupHandle = nullptr;
+
+constexpr float CLEANUP_START_LIMIT = 0.80f;
+constexpr float CLEANUP_STOP_LIMIT  = 0.70f;
 
 struct TaskTCPParams{ // estructura tiene punteros a las structuras OG
     WifiSetup* configWifi;
@@ -20,6 +24,7 @@ struct TaskTCPParams{ // estructura tiene punteros a las structuras OG
 };
 
 TaskTCPParams taskTCPParams;
+
 
 // TIMER
 
@@ -44,7 +49,6 @@ void IRAM_ATTR onReadTimer(){
 
     if (taskWoken == pdTRUE){portYIELD_FROM_ISR();}
 }
-
 
 
 // TASK READ
@@ -81,7 +85,6 @@ void taskRead(void* parameter){
         }
     }
 }
-
 
 
 // TASK WRITE
@@ -150,7 +153,6 @@ void taskWriter(void* parameter){
 
     }
 }
-
 
 
 // TASK WIFI
@@ -233,7 +235,6 @@ void initTaskTCP(WifiSetup& configWifi, StorageState& storageState){
     }
 }
 
-
 void taskTCP(void* parameter){
 
     TaskTCPParams* params = static_cast<TaskTCPParams*>(parameter);
@@ -272,3 +273,101 @@ void taskTCP(void* parameter){
         vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
+
+
+// TASK CLEANUP
+
+void initTaskCleanup(StorageState& storageState){
+    
+    BaseType_t result = xTaskCreatePinnedToCore(
+    taskCleanup,
+    "taskCleanup",
+    4096,
+    &storageState,
+    0, // baja prioridad
+    &taskCleanupHandle,
+    0 // core
+    );
+
+    if (result != pdPASS){
+        Serial.println("ERROR creando taskCleanup");
+        return;
+    }
+};
+
+void taskCleanup(void* parameter){
+    StorageState* storageState = static_cast<StorageState*>(parameter);
+
+    bool flag = false;
+    bool flagDel = false;
+    int contador = 0;
+
+    while(true){
+        float usedSpace;
+
+        xSemaphoreTake(sdMutex, portMAX_DELAY); // bloqueo la SD
+        usedSpace = ver_espacio_usado();
+        xSemaphoreGive(sdMutex); // libero la SD
+
+        if (!flag && usedSpace >= CLEANUP_START_LIMIT){ 
+            flag = true; // entro modo limpieza
+            Serial.println("TaskCleanup: Iniciando Limpieza");
+        }
+
+        if (flag && usedSpace <= CLEANUP_STOP_LIMIT){
+            flag = false;
+            Serial.println("TaskCleanup: limpieza finalizada");
+        }
+
+        if (flag){ // si hay que limpiar
+
+            uint16_t fileToDelete = storageState->oldest_file;
+
+            // Nunca borrar el archivo que TaskWriter está utilizando actualmente
+            if (fileToDelete == storageState->current_writing_file){
+
+                Serial.println("TaskCleanup: no quedan archivos historicos para eliminar");
+                contador = 0;
+
+                vTaskDelay(pdMS_TO_TICKS(5000));
+                continue;
+            }
+
+
+            xSemaphoreTake(sdMutex, portMAX_DELAY);
+            flagDel = borrar_archivo_csv(fileToDelete);
+            xSemaphoreGive(sdMutex);
+
+
+            if (flagDel){
+
+                uint16_t nextOldest = static_cast<uint16_t>(fileToDelete + 1);
+
+                // Primero persistimos en NVS
+                if (guardar_oldest_file(nextOldest)){
+                    storageState->oldest_file = nextOldest;
+                    contador = 0;
+                }else{
+                    Serial.println("ERROR persistiendo oldest_file");
+                }
+
+            }else{
+                Serial.print("ERROR eliminando el archivo ");
+                Serial.println(fileToDelete);
+                contador++;
+
+                if (contador >= 5){
+                
+                    Serial.println("TaskCleanup: 5 intentos fallidos. Se reintentara mas tarde" );
+                    contador = 0;
+                    vTaskDelay(pdMS_TO_TICKS(5000));
+                    continue;
+                }
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }else{
+            vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+    }
+};

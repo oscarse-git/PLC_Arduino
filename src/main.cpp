@@ -67,9 +67,13 @@ void setup(){
     initTaskTCP(configWifi, storageState);
     Serial.println("taskTCP inicializado");
 
+    // Iniciamos task cleanup
+    initTaskCleanup(storageState);
+    Serial.println("taskCleanup inicializado");
 
     // Iniciamos el timer y empieza a funcionar esto
     initReadTimer();
+    
     Serial.println("Timer de lectura iniciado");
     Serial.println("==============================");
     Serial.println("      PLC INICIALIZADO");
@@ -79,6 +83,6 @@ void setup(){
 void loop(){
     // Toda la logica funciona mediante FreeRTOS tasks.
     // No necesitamos ejecutar nada aqui.
-
+    // El bucle solo mantiene loop() dormido
     vTaskDelay(pdMS_TO_TICKS(1000));
 }
